@@ -12,7 +12,12 @@ import {
   Cpu,
   Layers,
   ArrowRight,
-  AlertCircle
+  AlertCircle,
+  Award,
+  Sparkles,
+  Terminal,
+  Crosshair,
+  Coins
 } from 'lucide-react';
 import {
   DEFAULT_CONTRACT_ADDRESS,
@@ -22,10 +27,15 @@ import {
   fetchClaimableBalance,
   fetchStudionetBalance,
   ensureStudionet,
+  adjudicateSecurityAudit,
+  adjudicateAppeal,
+  finalizeSettlement,
+  cancelOrReclaim,
   AuditBountyData,
   ProtocolStats,
   STUDIONET_CHAIN_ID,
-  STUDIONET_CHAIN_ID_HEX
+  STUDIONET_CHAIN_ID_HEX,
+  STUDIONET_RPC_URL
 } from './config/genlayer';
 import { Navbar } from './components/Navbar';
 import { StatsOverview } from './components/StatsOverview';
@@ -36,6 +46,9 @@ import { AuditInspectorModal } from './components/AuditInspectorModal';
 import { AppealModal } from './components/AppealModal';
 import { PullPayoutButton } from './components/PullPayoutButton';
 import { QuickDemoBar } from './components/QuickDemoBar';
+import { VulnerabilityMatrix } from './components/VulnerabilityMatrix';
+import { HolographicCertificateModal } from './components/HolographicCertificateModal';
+import { ConsensusTerminalModal } from './components/ConsensusTerminalModal';
 
 export const App: React.FC = () => {
   const [account, setAccount] = useState<string>('');
@@ -52,6 +65,9 @@ export const App: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [networkCorrect, setNetworkCorrect] = useState(true);
 
+  // Active action in flight
+  const [processingAction, setProcessingAction] = useState<string | null>(null);
+
   // Filter & Search states
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'open' | 'review' | 'settled'>('all');
@@ -61,6 +77,15 @@ export const App: React.FC = () => {
   const [selectedBountyForDeliverable, setSelectedBountyForDeliverable] = useState<AuditBountyData | null>(null);
   const [selectedBountyForInspector, setSelectedBountyForInspector] = useState<AuditBountyData | null>(null);
   const [selectedBountyForAppeal, setSelectedBountyForAppeal] = useState<AuditBountyData | null>(null);
+  const [selectedBountyForCertificate, setSelectedBountyForCertificate] = useState<AuditBountyData | null>(null);
+
+  // Consensus Terminal state
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalTitle, setTerminalTitle] = useState('');
+  const [terminalBountyId, setTerminalBountyId] = useState('');
+  const [terminalStatus, setTerminalStatus] = useState<'running' | 'success' | 'error'>('running');
+  const [terminalError, setTerminalError] = useState<string | undefined>(undefined);
+  const [terminalTxHash, setTerminalTxHash] = useState<string | undefined>(undefined);
 
   // Connect Wallet
   const connectWallet = async () => {
@@ -165,6 +190,94 @@ export const App: React.FC = () => {
     loadData();
   }, [loadData]);
 
+  // Action: Trigger AI Security Jury Adjudication with live terminal
+  const handleTriggerAdjudicate = async (bountyId: string) => {
+    if (!account) return alert('Please connect wallet');
+
+    try {
+      setProcessingAction(`adjudicate_${bountyId}`);
+      setTerminalBountyId(bountyId);
+      setTerminalTitle('AI Security Jury Multi-Validator Consensus Adjudication');
+      setTerminalStatus('running');
+      setTerminalError(undefined);
+      setTerminalTxHash(undefined);
+      setTerminalOpen(true);
+
+      const res = await adjudicateSecurityAudit(contractAddress, account, bountyId);
+      const tx = typeof res === 'string' ? res : (res as any)?.hash || (res as any)?.transactionHash;
+      if (tx) setTerminalTxHash(String(tx));
+
+      setTerminalStatus('success');
+      await loadData();
+    } catch (err: any) {
+      console.error('Adjudicate error:', err);
+      setTerminalStatus('error');
+      setTerminalError(err?.message || 'Transaction rejected or consensus error');
+    } finally {
+      setProcessingAction(null);
+    }
+  };
+
+  // Action: Adjudicate Appeal
+  const handleTriggerAppealAdjudicate = async (bountyId: string) => {
+    if (!account) return alert('Please connect wallet');
+
+    try {
+      setProcessingAction(`appeal_adjudicate_${bountyId}`);
+      setTerminalBountyId(bountyId);
+      setTerminalTitle('Supreme Appellate Council Re-Evaluation with Bound Trace');
+      setTerminalStatus('running');
+      setTerminalError(undefined);
+      setTerminalTxHash(undefined);
+      setTerminalOpen(true);
+
+      const res = await adjudicateAppeal(contractAddress, account, bountyId);
+      const tx = typeof res === 'string' ? res : (res as any)?.hash || (res as any)?.transactionHash;
+      if (tx) setTerminalTxHash(String(tx));
+
+      setTerminalStatus('success');
+      await loadData();
+    } catch (err: any) {
+      console.error('Appeal adjudicate error:', err);
+      setTerminalStatus('error');
+      setTerminalError(err?.message || 'Appellate transaction failed');
+    } finally {
+      setProcessingAction(null);
+    }
+  };
+
+  // Action: Finalize Settlement
+  const handleTriggerFinalize = async (bountyId: string) => {
+    if (!account) return alert('Please connect wallet');
+
+    try {
+      setProcessingAction(`finalize_${bountyId}`);
+      await finalizeSettlement(contractAddress, account, bountyId);
+      await loadData();
+    } catch (err: any) {
+      console.error('Finalize settlement error:', err);
+      alert(`Finalize settlement failed: ${err?.message || err}`);
+    } finally {
+      setProcessingAction(null);
+    }
+  };
+
+  // Action: Reclaim expired escrow
+  const handleTriggerReclaim = async (bountyId: string) => {
+    if (!account) return alert('Please connect wallet');
+
+    try {
+      setProcessingAction(`reclaim_${bountyId}`);
+      await cancelOrReclaim(contractAddress, account, bountyId);
+      await loadData();
+    } catch (err: any) {
+      console.error('Reclaim error:', err);
+      alert(`Reclaim failed: ${err?.message || err}`);
+    } finally {
+      setProcessingAction(null);
+    }
+  };
+
   // Filtered bounties
   const filteredBounties = bounties.filter((b) => {
     const matchesQuery =
@@ -200,13 +313,13 @@ export const App: React.FC = () => {
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         {/* Hero Section */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#0F172A] via-[#070A12] to-[#0F172A] border border-cyan-500/20 p-6 sm:p-10 shadow-2xl">
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#0F172A] via-[#070A12] to-[#0F172A] border border-cyan-500/30 p-6 sm:p-10 shadow-2xl">
           <div className="absolute top-0 right-0 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
           <div className="absolute bottom-0 left-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
 
           <div className="relative z-10 max-w-3xl space-y-4">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 text-xs font-mono">
-              <Shield className="w-3.5 h-3.5" />
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/90 border border-cyan-500/40 text-cyan-300 text-xs font-mono">
+              <Shield className="w-3.5 h-3.5 text-cyan-400" />
               <span>Autonomous Smart Contract Security Audit Escrow</span>
             </div>
 
@@ -221,7 +334,7 @@ export const App: React.FC = () => {
             <div className="flex flex-wrap items-center gap-3 pt-2">
               <button
                 onClick={() => setIsCreateOpen(true)}
-                className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-slate-950 font-bold text-sm font-mono transition-all shadow-[0_0_25px_rgba(6,182,212,0.35)]"
+                className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-slate-950 font-bold text-sm font-mono transition-all shadow-[0_0_25px_rgba(6,182,212,0.35)]"
               >
                 <PlusCircle className="w-4 h-4" />
                 <span>Launch New Audit Bounty</span>
@@ -231,7 +344,7 @@ export const App: React.FC = () => {
                 href="https://studio.genlayer.com"
                 target="_blank"
                 rel="noreferrer"
-                className="flex items-center gap-1.5 px-5 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-cyan-500 text-slate-300 hover:text-white font-mono text-sm transition-all"
+                className="flex items-center gap-1.5 px-5 py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-cyan-500 text-slate-300 hover:text-white font-mono text-sm transition-all"
               >
                 <span>GenLayer Studio</span>
                 <ExternalLink className="w-4 h-4 text-cyan-400" />
@@ -251,6 +364,12 @@ export const App: React.FC = () => {
         {/* Aggregated Protocol Stats */}
         <StatsOverview stats={stats} contractAddress={contractAddress} />
 
+        {/* 2D Interactive Vulnerability Radar Matrix */}
+        <VulnerabilityMatrix
+          bounties={bounties}
+          onSelectBounty={(b) => setSelectedBountyForInspector(b)}
+        />
+
         {/* Quick Demo Bar for Evaluators */}
         <QuickDemoBar
           contractAddress={contractAddress}
@@ -265,37 +384,37 @@ export const App: React.FC = () => {
               <h2 className="font-display font-bold text-xl sm:text-2xl text-white flex items-center gap-2">
                 <span>Security Audit War Room</span>
                 <span className="text-xs font-mono px-2.5 py-0.5 rounded-full bg-cyan-950 border border-cyan-800 text-cyan-300">
-                  {filteredBounties.length} Programs
+                  {filteredBounties.length} Programs Active
                 </span>
               </h2>
               <p className="text-xs text-slate-400 font-mono">
-                Live bug bounty escrows & vulnerability disclosures on GenLayer Studionet
+                100% on-chain audit escrows & vulnerability disclosures on GenLayer Studionet
               </p>
             </div>
 
             {/* Filter Tabs */}
-            <div className="flex items-center p-1 rounded-xl bg-slate-900 border border-slate-800 font-mono text-xs">
+            <div className="flex items-center p-1 rounded-2xl bg-slate-900 border border-slate-800 font-mono text-xs">
               <button
                 onClick={() => setActiveTab('all')}
-                className={`px-3 py-1.5 rounded-lg transition-all ${activeTab === 'all' ? 'bg-cyan-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'}`}
+                className={`px-3.5 py-1.5 rounded-xl transition-all ${activeTab === 'all' ? 'bg-cyan-500 text-slate-950 font-bold shadow' : 'text-slate-400 hover:text-white'}`}
               >
                 All ({bounties.length})
               </button>
               <button
                 onClick={() => setActiveTab('open')}
-                className={`px-3 py-1.5 rounded-lg transition-all ${activeTab === 'open' ? 'bg-cyan-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'}`}
+                className={`px-3.5 py-1.5 rounded-xl transition-all ${activeTab === 'open' ? 'bg-cyan-500 text-slate-950 font-bold shadow' : 'text-slate-400 hover:text-white'}`}
               >
                 Open ({bounties.filter(b => b.status === 0).length})
               </button>
               <button
                 onClick={() => setActiveTab('review')}
-                className={`px-3 py-1.5 rounded-lg transition-all ${activeTab === 'review' ? 'bg-cyan-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'}`}
+                className={`px-3.5 py-1.5 rounded-xl transition-all ${activeTab === 'review' ? 'bg-cyan-500 text-slate-950 font-bold shadow' : 'text-slate-400 hover:text-white'}`}
               >
                 In Review ({bounties.filter(b => b.status === 1 || b.status === 2 || b.status === 6 || b.status === 8).length})
               </button>
               <button
                 onClick={() => setActiveTab('settled')}
-                className={`px-3 py-1.5 rounded-lg transition-all ${activeTab === 'settled' ? 'bg-cyan-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'}`}
+                className={`px-3.5 py-1.5 rounded-xl transition-all ${activeTab === 'settled' ? 'bg-cyan-500 text-slate-950 font-bold shadow' : 'text-slate-400 hover:text-white'}`}
               >
                 Settled ({bounties.filter(b => b.status === 3 || b.status === 4 || b.status === 5 || b.status === 7).length})
               </button>
@@ -310,7 +429,7 @@ export const App: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search by codebase repository scope, vulnerability title, or bounty ID..."
-              className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-slate-200 focus:outline-none focus:border-cyan-500 transition-colors"
+              className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-sm font-mono text-slate-200 focus:outline-none focus:border-cyan-500 transition-colors"
             />
           </div>
 
@@ -326,12 +445,17 @@ export const App: React.FC = () => {
                   onOpenSubmitDeliverable={(b) => setSelectedBountyForDeliverable(b)}
                   onOpenAuditInspector={(b) => setSelectedBountyForInspector(b)}
                   onOpenAppeal={(b) => setSelectedBountyForAppeal(b)}
-                  onRefresh={loadData}
+                  onViewCertificate={(b) => setSelectedBountyForCertificate(b)}
+                  onTriggerAdjudicate={handleTriggerAdjudicate}
+                  onTriggerAppealAdjudicate={handleTriggerAppealAdjudicate}
+                  onTriggerFinalize={handleTriggerFinalize}
+                  onTriggerReclaim={handleTriggerReclaim}
+                  isProcessingAction={processingAction}
                 />
               ))}
             </div>
           ) : (
-            <div className="text-center py-12 px-4 rounded-2xl bg-slate-950/60 border border-slate-800/80 space-y-3">
+            <div className="text-center py-12 px-4 rounded-3xl bg-slate-950/60 border border-slate-800/80 space-y-3">
               <Shield className="w-10 h-10 text-slate-600 mx-auto" />
               <h3 className="font-display font-semibold text-lg text-slate-300">
                 No Security Audit Bounties Found
@@ -451,6 +575,7 @@ export const App: React.FC = () => {
         isOpen={Boolean(selectedBountyForInspector)}
         onClose={() => setSelectedBountyForInspector(null)}
         bounty={selectedBountyForInspector}
+        onViewCertificate={(b) => setSelectedBountyForCertificate(b)}
       />
 
       <AppealModal
@@ -460,6 +585,23 @@ export const App: React.FC = () => {
         contractAddress={contractAddress}
         account={account}
         onSuccess={loadData}
+      />
+
+      <HolographicCertificateModal
+        isOpen={Boolean(selectedBountyForCertificate)}
+        onClose={() => setSelectedBountyForCertificate(null)}
+        bounty={selectedBountyForCertificate}
+        contractAddress={contractAddress}
+      />
+
+      <ConsensusTerminalModal
+        isOpen={terminalOpen}
+        onClose={() => setTerminalOpen(false)}
+        title={terminalTitle}
+        bountyId={terminalBountyId}
+        status={terminalStatus}
+        errorMessage={terminalError}
+        txHash={terminalTxHash}
       />
     </div>
   );
