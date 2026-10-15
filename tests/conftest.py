@@ -428,11 +428,11 @@ class _MockContractInstance:
             raise ValueError("Role Violation: Only protocol team can reclaim expired bounty escrow.")
 
         curr_time = self._get_time()
-        if b["status"] == STATUS_BOUNTY_OPEN:
+        if b["status"] in (STATUS_BOUNTY_OPEN, STATUS_UNRESOLVED):
             if curr_time < int(b["expires_at_time"]):
-                raise ValueError("Cannot reclaim: Bounty is still active.")
+                raise ValueError("Cannot reclaim: Bounty duration is still active.")
         else:
-            raise ValueError("Cannot reclaim: Bounty has deliverables under review or already settled.")
+            raise ValueError("Cannot reclaim: Bounty has deliverables actively undergoing evaluation or already settled.")
 
         b["status"] = STATUS_CANCELLED
         b["verdict"] = "CANCELLED"

@@ -710,12 +710,12 @@ Respond ONLY with valid JSON:
         if _addr_str(_get_sender()) != _addr_str(b.protocol_team):
             raise ContractError("Role Violation: Only protocol team can reclaim expired bounty escrow.")
 
-        current_time = self._get_current_timestamp()
-        if b.status == STATUS_BOUNTY_OPEN:
+        # Allow reclaim if no deliverable submitted OR if stalled in UNRESOLVED and past expiry
+        if b.status in (STATUS_BOUNTY_OPEN, STATUS_UNRESOLVED):
             if current_time < b.expires_at_time:
-                raise ContractError(f"Cannot reclaim: Bounty is still active (expires at {int(b.expires_at_time)}).")
+                raise ContractError(f"Cannot reclaim: Bounty duration is still active (expires at {int(b.expires_at_time)}).")
         else:
-            raise ContractError("Cannot reclaim: Bounty has deliverables under review or already settled.")
+            raise ContractError("Cannot reclaim: Bounty has deliverables actively undergoing evaluation or already settled.")
 
         b.status = STATUS_CANCELLED
         b.verdict = "CANCELLED"

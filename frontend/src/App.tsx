@@ -3,7 +3,6 @@ import {
   Shield,
   PlusCircle,
   Search,
-  Filter,
   RefreshCw,
   ExternalLink,
   Code2,
@@ -17,11 +16,18 @@ import {
   Sparkles,
   Terminal,
   Crosshair,
-  Coins
+  Coins,
+  Settings,
+  HelpCircle,
+  X,
+  UserCheck,
+  Building,
+  CheckCircle2
 } from 'lucide-react';
 import {
   DEFAULT_CONTRACT_ADDRESS,
   getSavedContractAddress,
+  saveContractAddress,
   fetchStats,
   fetchAllBounties,
   fetchClaimableBalance,
@@ -31,26 +37,36 @@ import {
   adjudicateAppeal,
   finalizeSettlement,
   cancelOrReclaim,
+  claimPayout,
   AuditBountyData,
   ProtocolStats,
   STUDIONET_CHAIN_ID,
   STUDIONET_CHAIN_ID_HEX,
-  STUDIONET_RPC_URL
+  STUDIONET_RPC_URL,
+  STATUS_DISPUTED,
+  STATUS_AWAITING_PAYOUT
 } from './config/genlayer';
-import { Navbar } from './components/Navbar';
-import { StatsOverview } from './components/StatsOverview';
+import { Sidebar, ViewMode } from './components/Sidebar';
+import { HeaderBar } from './components/HeaderBar';
+import { DockedInspector } from './components/DockedInspector';
+import { AppellateCourtView } from './components/AppellateCourtView';
+import { AuditorRegistryView } from './components/AuditorRegistryView';
+import { VulnerabilityMatrix } from './components/VulnerabilityMatrix';
 import { BountyCard } from './components/BountyCard';
 import { CreateBountyModal } from './components/CreateBountyModal';
 import { SubmitDeliverableModal } from './components/SubmitDeliverableModal';
 import { AuditInspectorModal } from './components/AuditInspectorModal';
 import { AppealModal } from './components/AppealModal';
-import { PullPayoutButton } from './components/PullPayoutButton';
-import { QuickDemoBar } from './components/QuickDemoBar';
-import { VulnerabilityMatrix } from './components/VulnerabilityMatrix';
 import { HolographicCertificateModal } from './components/HolographicCertificateModal';
 import { ConsensusTerminalModal } from './components/ConsensusTerminalModal';
+import { QuickDemoBar } from './components/QuickDemoBar';
+import { formatAddress, formatGen } from './utils/formatters';
 
 export const App: React.FC = () => {
+  // Global View Navigation
+  const [currentView, setCurrentView] = useState<ViewMode>('war_room');
+
+  // Web3 & Contract State
   const [account, setAccount] = useState<string>('');
   const [balance, setBalance] = useState<string>('0.000');
   const [contractAddress, setContractAddress] = useState<string>(getSavedContractAddress());
@@ -63,12 +79,17 @@ export const App: React.FC = () => {
   const [claimableBalance, setClaimableBalance] = useState<string>('0');
   const [isConnecting, setIsConnecting] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isClaiming, setIsClaiming] = useState(false);
   const [networkCorrect, setNetworkCorrect] = useState(true);
+  const [latency, setLatency] = useState<number | null>(null);
 
-  // Active action in flight
+  // Active Selected Bounty for Docked Inspector
+  const [selectedBountyForDocked, setSelectedBountyForDocked] = useState<AuditBountyData | null>(null);
+
+  // In-flight Action Lock
   const [processingAction, setProcessingAction] = useState<string | null>(null);
 
-  // Filter & Search states
+  // War Room Filter & Search
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'open' | 'review' | 'settled'>('all');
 
@@ -78,6 +99,9 @@ export const App: React.FC = () => {
   const [selectedBountyForInspector, setSelectedBountyForInspector] = useState<AuditBountyData | null>(null);
   const [selectedBountyForAppeal, setSelectedBountyForAppeal] = useState<AuditBountyData | null>(null);
   const [selectedBountyForCertificate, setSelectedBountyForCertificate] = useState<AuditBountyData | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isRoleGuideOpen, setIsRoleGuideOpen] = useState(false);
+  const [tempContractAddress, setTempContractAddress] = useState(contractAddress);
 
   // Consensus Terminal state
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -86,6 +110,22 @@ export const App: React.FC = () => {
   const [terminalStatus, setTerminalStatus] = useState<'running' | 'success' | 'error'>('running');
   const [terminalError, setTerminalError] = useState<string | undefined>(undefined);
   const [terminalTxHash, setTerminalTxHash] = useState<string | undefined>(undefined);
+
+  // Ping Latency
+  const measureLatency = async () => {
+    const start = performance.now();
+    try {
+      await fetch(STUDIONET_RPC_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
+      });
+      const end = performance.now();
+      setLatency(Math.round(end - start));
+    } catch {
+      setLatency(null);
+    }
+  };
 
   // Connect Wallet
   const connectWallet = async () => {
@@ -124,12 +164,22 @@ export const App: React.FC = () => {
   const loadData = useCallback(async () => {
     try {
       setIsRefreshing(true);
+      measureLatency();
       const [statsData, bountiesData] = await Promise.all([
         fetchStats(contractAddress),
         fetchAllBounties(contractAddress),
       ]);
       setStats(statsData);
       setBounties(bountiesData);
+
+      // Default selected docked bounty if none selected
+      setSelectedBountyForDocked((prev) => {
+        if (prev) {
+          const updated = bountiesData.find((b) => b.bounty_id === prev.bounty_id);
+          return updated || bountiesData[0] || null;
+        }
+        return bountiesData[0] || null;
+      });
 
       if (account) {
         await loadBalances(account);
@@ -141,7 +191,7 @@ export const App: React.FC = () => {
     }
   }, [contractAddress, account]);
 
-  // Check network on mount
+  // Network listener & auto-load
   useEffect(() => {
     if (typeof window !== 'undefined' && (window as any).ethereum) {
       const eth = (window as any).ethereum;
@@ -151,7 +201,7 @@ export const App: React.FC = () => {
           const currentChain = await eth.request({ method: 'eth_chainId' });
           const matches = currentChain?.toLowerCase() === STUDIONET_CHAIN_ID_HEX.toLowerCase();
           setNetworkCorrect(matches);
-        } catch (e) {
+        } catch {
           // ignore
         }
       };
@@ -185,12 +235,11 @@ export const App: React.FC = () => {
     }
   }, [loadData]);
 
-  // Initial load
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  // Action: Trigger AI Security Jury Adjudication with live terminal
+  // Action: Trigger AI Security Jury Adjudication
   const handleTriggerAdjudicate = async (bountyId: string) => {
     if (!account) return alert('Please connect wallet');
 
@@ -278,7 +327,23 @@ export const App: React.FC = () => {
     }
   };
 
-  // Filtered bounties
+  // Action: Pull Payout
+  const handleClaimPullPayout = async () => {
+    if (!account) return alert('Please connect wallet');
+    try {
+      setIsClaiming(true);
+      await claimPayout(contractAddress, account);
+      await loadData();
+      alert('Pull-payment withdrawn successfully to your wallet!');
+    } catch (err: any) {
+      console.error('Claim payout error:', err);
+      alert(`Pull payout failed: ${err?.message || err}`);
+    } finally {
+      setIsClaiming(false);
+    }
+  };
+
+  // Filtered bounties for War Room feed
   const filteredBounties = bounties.filter((b) => {
     const matchesQuery =
       b.scope_repository.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -294,266 +359,342 @@ export const App: React.FC = () => {
     return true;
   });
 
+  const disputedCount = bounties.filter((b) => b.status === STATUS_DISPUTED).length;
+
   return (
-    <div className="min-h-screen bg-[#070A12] text-slate-100 flex flex-col font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
-      {/* Top Navbar */}
-      <Navbar
-        account={account}
-        balance={balance}
-        contractAddress={contractAddress}
-        onConnect={connectWallet}
-        onRefresh={loadData}
-        onContractAddressChange={(newAddr) => {
-          setContractAddress(newAddr);
-        }}
-        isConnecting={isConnecting}
-        isRefreshing={isRefreshing}
-        networkCorrect={networkCorrect}
-      />
-
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        {/* Hero Section */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#0F172A] via-[#070A12] to-[#0F172A] border border-cyan-500/30 p-6 sm:p-10 shadow-2xl">
-          <div className="absolute top-0 right-0 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
-          <div className="absolute bottom-0 left-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
-
-          <div className="relative z-10 max-w-3xl space-y-4">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/90 border border-cyan-500/40 text-cyan-300 text-xs font-mono">
-              <Shield className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Autonomous Smart Contract Security Audit Escrow</span>
-            </div>
-
-            <h1 className="font-display font-extrabold text-3xl sm:text-5xl text-white tracking-tight leading-tight">
-              Decentralized <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-emerald-400 to-indigo-400">Security Audit Court</span> & Bug Bounty Escrow
-            </h1>
-
-            <p className="text-slate-300 text-sm sm:text-base leading-relaxed">
-              Traditional EVM cannot read GitHub repositories, compile exploit PoCs, or verify SHA-256 deliverable commitments. <strong>AgentSecScan</strong> leverages GenLayer’s Intelligent Consensus to cross-examine AST exploitability, test reproducible PoCs on-chain, and settle bug bounty disbursements without trusting either protocol teams or researchers.
-            </p>
-
-            <div className="flex flex-wrap items-center gap-3 pt-2">
-              <button
-                onClick={() => setIsCreateOpen(true)}
-                className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-slate-950 font-bold text-sm font-mono transition-all shadow-[0_0_25px_rgba(6,182,212,0.35)]"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>Launch New Audit Bounty</span>
-              </button>
-
-              <a
-                href="https://studio.genlayer.com"
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-1.5 px-5 py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-cyan-500 text-slate-300 hover:text-white font-mono text-sm transition-all"
-              >
-                <span>GenLayer Studio</span>
-                <ExternalLink className="w-4 h-4 text-cyan-400" />
-              </a>
-            </div>
-          </div>
-        </div>
-
-        {/* Pull Payment Recovery Bar */}
-        <PullPayoutButton
+    <div className="min-h-screen bg-[#040711] text-slate-100 flex flex-col font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
+      <div className="flex flex-1 min-h-screen overflow-x-hidden">
+        {/* Left Sticky High-Tech Sidebar */}
+        <Sidebar
+          currentView={currentView}
+          onSelectView={setCurrentView}
           contractAddress={contractAddress}
           account={account}
-          claimableBalance={claimableBalance}
-          onSuccess={loadData}
+          balance={balance}
+          latency={latency}
+          onOpenSettings={() => {
+            setTempContractAddress(contractAddress);
+            setIsSettingsOpen(true);
+          }}
+          onOpenRoleGuide={() => setIsRoleGuideOpen(true)}
+          bountiesCount={bounties.length}
+          disputedCount={disputedCount}
         />
 
-        {/* Aggregated Protocol Stats */}
-        <StatsOverview stats={stats} contractAddress={contractAddress} />
+        {/* Main Central Operations Field */}
+        <div className="flex-1 flex flex-col min-w-0 bg-[#060914]">
+          {/* Top Real-time HeaderBar with Ticker & Wallet Controls */}
+          <HeaderBar
+            account={account}
+            balance={balance}
+            claimableBalance={claimableBalance}
+            totalLocked={stats.total_bounty_locked}
+            settledCount={stats.total_audits_settled}
+            totalBounties={stats.total_bounties}
+            onConnect={connectWallet}
+            onRefresh={loadData}
+            onOpenCreate={() => setIsCreateOpen(true)}
+            onClaimPayout={handleClaimPullPayout}
+            isConnecting={isConnecting}
+            isRefreshing={isRefreshing}
+            isClaiming={isClaiming}
+            networkCorrect={networkCorrect}
+          />
 
-        {/* 2D Interactive Vulnerability Radar Matrix */}
-        <VulnerabilityMatrix
-          bounties={bounties}
-          onSelectBounty={(b) => setSelectedBountyForInspector(b)}
-        />
-
-        {/* Quick Demo Bar for Evaluators */}
-        <QuickDemoBar
-          contractAddress={contractAddress}
-          account={account}
-          onRefresh={loadData}
-        />
-
-        {/* Bounties War Room Section */}
-        <div className="space-y-5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h2 className="font-display font-bold text-xl sm:text-2xl text-white flex items-center gap-2">
-                <span>Security Audit War Room</span>
-                <span className="text-xs font-mono px-2.5 py-0.5 rounded-full bg-cyan-950 border border-cyan-800 text-cyan-300">
-                  {filteredBounties.length} Programs Active
-                </span>
-              </h2>
-              <p className="text-xs text-slate-400 font-mono">
-                100% on-chain audit escrows & vulnerability disclosures on GenLayer Studionet
-              </p>
-            </div>
-
-            {/* Filter Tabs */}
-            <div className="flex items-center p-1 rounded-2xl bg-slate-900 border border-slate-800 font-mono text-xs">
-              <button
-                onClick={() => setActiveTab('all')}
-                className={`px-3.5 py-1.5 rounded-xl transition-all ${activeTab === 'all' ? 'bg-cyan-500 text-slate-950 font-bold shadow' : 'text-slate-400 hover:text-white'}`}
-              >
-                All ({bounties.length})
-              </button>
-              <button
-                onClick={() => setActiveTab('open')}
-                className={`px-3.5 py-1.5 rounded-xl transition-all ${activeTab === 'open' ? 'bg-cyan-500 text-slate-950 font-bold shadow' : 'text-slate-400 hover:text-white'}`}
-              >
-                Open ({bounties.filter(b => b.status === 0).length})
-              </button>
-              <button
-                onClick={() => setActiveTab('review')}
-                className={`px-3.5 py-1.5 rounded-xl transition-all ${activeTab === 'review' ? 'bg-cyan-500 text-slate-950 font-bold shadow' : 'text-slate-400 hover:text-white'}`}
-              >
-                In Review ({bounties.filter(b => b.status === 1 || b.status === 2 || b.status === 6 || b.status === 8).length})
-              </button>
-              <button
-                onClick={() => setActiveTab('settled')}
-                className={`px-3.5 py-1.5 rounded-xl transition-all ${activeTab === 'settled' ? 'bg-cyan-500 text-slate-950 font-bold shadow' : 'text-slate-400 hover:text-white'}`}
-              >
-                Settled ({bounties.filter(b => b.status === 3 || b.status === 4 || b.status === 5 || b.status === 7).length})
-              </button>
-            </div>
-          </div>
-
-          {/* Search bar */}
-          <div className="relative">
-            <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by codebase repository scope, vulnerability title, or bounty ID..."
-              className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-sm font-mono text-slate-200 focus:outline-none focus:border-cyan-500 transition-colors"
+          {/* Dynamic Workspace Container */}
+          <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1700px] w-full mx-auto space-y-6">
+            {/* Quick Demo Simulation Bar (Always accessible for evaluator ease) */}
+            <QuickDemoBar
+              contractAddress={contractAddress}
+              account={account}
+              onRefresh={loadData}
             />
-          </div>
 
-          {/* Cards Grid */}
-          {filteredBounties.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {filteredBounties.map((bounty) => (
-                <BountyCard
-                  key={bounty.bounty_id}
-                  bounty={bounty}
-                  contractAddress={contractAddress}
-                  account={account}
-                  onOpenSubmitDeliverable={(b) => setSelectedBountyForDeliverable(b)}
-                  onOpenAuditInspector={(b) => setSelectedBountyForInspector(b)}
-                  onOpenAppeal={(b) => setSelectedBountyForAppeal(b)}
-                  onViewCertificate={(b) => setSelectedBountyForCertificate(b)}
-                  onTriggerAdjudicate={handleTriggerAdjudicate}
-                  onTriggerAppealAdjudicate={handleTriggerAppealAdjudicate}
-                  onTriggerFinalize={handleTriggerFinalize}
-                  onTriggerReclaim={handleTriggerReclaim}
-                  isProcessingAction={processingAction}
+            {/* ── WORKSPACE VIEW 1: AUDIT WAR ROOM (DUAL-PANE SOC) ── */}
+            {currentView === 'war_room' && (
+              <div className="space-y-6">
+                {/* War Room Header & Filter Bar */}
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-5 rounded-3xl bg-slate-950/80 border border-cyan-900/40 shadow-xl">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping"></span>
+                      <h2 className="text-xl font-display font-extrabold text-white tracking-wide">
+                        Audit Operations War Room
+                      </h2>
+                      <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 border border-cyan-800 text-cyan-300">
+                        {filteredBounties.length} Scopes Active
+                      </span>
+                    </div>
+                    <p className="text-xs font-mono text-slate-400">
+                      Live on-chain escrows, SHA-256 deliverable commitments, and AI-validated vulnerability disclosures.
+                    </p>
+                  </div>
+
+                  {/* Filter Pill Tabs */}
+                  <div className="flex items-center p-1 rounded-2xl bg-[#0B1021] border border-slate-800 font-mono text-xs overflow-x-auto">
+                    <button
+                      onClick={() => setActiveTab('all')}
+                      className={`px-3.5 py-1.5 rounded-xl transition-all whitespace-nowrap ${
+                        activeTab === 'all'
+                          ? 'bg-cyan-500 text-slate-950 font-bold shadow-[0_0_15px_rgba(6,182,212,0.4)]'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      All ({bounties.length})
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('open')}
+                      className={`px-3.5 py-1.5 rounded-xl transition-all whitespace-nowrap ${
+                        activeTab === 'open'
+                          ? 'bg-cyan-500 text-slate-950 font-bold shadow-[0_0_15px_rgba(6,182,212,0.4)]'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Open Escrow ({bounties.filter((b) => b.status === 0).length})
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('review')}
+                      className={`px-3.5 py-1.5 rounded-xl transition-all whitespace-nowrap ${
+                        activeTab === 'review'
+                          ? 'bg-cyan-500 text-slate-950 font-bold shadow-[0_0_15px_rgba(6,182,212,0.4)]'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Under Review ({bounties.filter((b) => [1, 2, 6, 8].includes(b.status)).length})
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('settled')}
+                      className={`px-3.5 py-1.5 rounded-xl transition-all whitespace-nowrap ${
+                        activeTab === 'settled'
+                          ? 'bg-cyan-500 text-slate-950 font-bold shadow-[0_0_15px_rgba(6,182,212,0.4)]'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Settled ({bounties.filter((b) => [3, 4, 5, 7].includes(b.status)).length})
+                    </button>
+                  </div>
+                </div>
+
+                {/* Dual-Pane Layout: Left 60% Bounties Feed, Right 40% Docked Inspector */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                  {/* Left Column (Feed) */}
+                  <div className="lg:col-span-7 space-y-4">
+                    {/* Search Field */}
+                    <div className="relative">
+                      <Search className="w-4 h-4 text-slate-500 absolute left-4 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search by codebase repo, vulnerability title, or bounty ID..."
+                        className="w-full pl-11 pr-4 py-3 rounded-2xl bg-slate-950/90 border border-slate-800 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors shadow-inner"
+                      />
+                    </div>
+
+                    {/* Cards List */}
+                    {filteredBounties.length > 0 ? (
+                      <div className="space-y-4">
+                        {filteredBounties.map((bounty) => {
+                          const isSelected = selectedBountyForDocked?.bounty_id === bounty.bounty_id;
+                          return (
+                            <div
+                              key={bounty.bounty_id}
+                              onClick={() => setSelectedBountyForDocked(bounty)}
+                              className={`cursor-pointer transition-all duration-300 rounded-3xl ${
+                                isSelected
+                                  ? 'ring-2 ring-cyan-500 shadow-[0_0_30px_rgba(6,182,212,0.25)]'
+                                  : 'hover:border-cyan-500/50'
+                              }`}
+                            >
+                              <BountyCard
+                                bounty={bounty}
+                                contractAddress={contractAddress}
+                                account={account}
+                                onOpenSubmitDeliverable={(b) => setSelectedBountyForDeliverable(b)}
+                                onOpenAuditInspector={(b) => setSelectedBountyForDocked(b)}
+                                onOpenAppeal={(b) => setSelectedBountyForAppeal(b)}
+                                onViewCertificate={(b) => setSelectedBountyForCertificate(b)}
+                                onTriggerAdjudicate={handleTriggerAdjudicate}
+                                onTriggerAppealAdjudicate={handleTriggerAppealAdjudicate}
+                                onTriggerFinalize={handleTriggerFinalize}
+                                onTriggerReclaim={handleTriggerReclaim}
+                                isProcessingAction={processingAction}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-center py-16 px-6 rounded-3xl bg-slate-950/60 border border-dashed border-slate-800 space-y-3">
+                        <Shield className="w-12 h-12 text-slate-600 mx-auto" />
+                        <h3 className="font-display font-bold text-lg text-slate-300">
+                          No Security Bounties Found
+                        </h3>
+                        <p className="text-xs text-slate-500 font-mono max-w-sm mx-auto">
+                          {searchQuery
+                            ? 'No programs matched your filter query. Clear search to view all.'
+                            : 'Lock a GEN escrow to protect your smart contracts with decentralized AI audits.'}
+                        </p>
+                        <button
+                          onClick={() => setIsCreateOpen(true)}
+                          className="mt-3 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs font-mono transition-all"
+                        >
+                          <PlusCircle className="w-4 h-4" />
+                          <span>Launch First Bounty</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right Column (Docked Threat Inspector) */}
+                  <div className="lg:col-span-5 sticky top-24">
+                    <DockedInspector
+                      bounty={selectedBountyForDocked}
+                      account={account}
+                      contractAddress={contractAddress}
+                      onOpenSubmitDeliverable={(b) => setSelectedBountyForDeliverable(b)}
+                      onOpenAppeal={(b) => setSelectedBountyForAppeal(b)}
+                      onViewCertificate={(b) => setSelectedBountyForCertificate(b)}
+                      onTriggerAdjudicate={handleTriggerAdjudicate}
+                      onTriggerAppealAdjudicate={handleTriggerAppealAdjudicate}
+                      onTriggerFinalize={handleTriggerFinalize}
+                      onTriggerReclaim={handleTriggerReclaim}
+                      isProcessingAction={processingAction}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── WORKSPACE VIEW 2: 2D THREAT RADAR & VULNERABILITY MATRIX ── */}
+            {currentView === 'threat_radar' && (
+              <div className="space-y-6">
+                <VulnerabilityMatrix
+                  bounties={bounties}
+                  onSelectBounty={(b) => {
+                    setSelectedBountyForDocked(b);
+                    setCurrentView('war_room');
+                  }}
                 />
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-12 px-4 rounded-3xl bg-slate-950/60 border border-slate-800/80 space-y-3">
-              <Shield className="w-10 h-10 text-slate-600 mx-auto" />
-              <h3 className="font-display font-semibold text-lg text-slate-300">
-                No Security Audit Bounties Found
-              </h3>
-              <p className="text-xs text-slate-500 font-mono max-w-md mx-auto">
-                {searchQuery
-                  ? 'No bounties matched your search query. Try clearing the filter.'
-                  : 'Be the first protocol team to lock GEN escrow and invite world-class whitehat auditors.'}
-              </p>
-              <button
-                onClick={() => setIsCreateOpen(true)}
-                className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs font-mono transition-all"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>Launch First Bounty</span>
-              </button>
-            </div>
-          )}
-        </div>
 
-        {/* Architecture & How It Works Explainer */}
-        <div className="bg-[#0F172A] border border-cyan-900/30 rounded-3xl p-6 sm:p-8 space-y-6">
-          <div className="max-w-2xl">
-            <span className="text-xs font-mono uppercase text-cyan-400 font-semibold tracking-wider">
-              Under The Hood
-            </span>
-            <h3 className="font-display font-bold text-xl sm:text-2xl text-white mt-1">
-              How AgentSecScan Eliminates Bug Bounty Disputes
-            </h3>
-            <p className="text-xs sm:text-sm text-slate-400 font-mono mt-1">
-              Deterministic Web3 Smart Contracts cannot read external repos or run code. GenLayer makes it possible.
-            </p>
-          </div>
+                {/* Detailed Vulnerability Breakdown Table */}
+                <div className="rounded-3xl bg-[#080D1D] border border-cyan-900/30 p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <h3 className="text-lg font-display font-bold text-white flex items-center gap-2">
+                        <Code2 className="w-5 h-5 text-cyan-400" />
+                        <span>AST Exploitability Taxonomy Index</span>
+                      </h3>
+                      <p className="text-xs font-mono text-slate-400">
+                        Classified according to Immunefi & OWASP Smart Contract Top 10 standards.
+                      </p>
+                    </div>
+                  </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
-              <div className="w-9 h-9 rounded-xl bg-cyan-950 border border-cyan-800 flex items-center justify-center text-cyan-400 font-mono font-bold text-sm">
-                1
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs font-mono">
+                      <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800">
+                        <tr>
+                          <th className="p-3">Bounty ID</th>
+                          <th className="p-3">Repository Scope</th>
+                          <th className="p-3">Vulnerability Category</th>
+                          <th className="p-3">Severity</th>
+                          <th className="p-3">Reproducibility</th>
+                          <th className="p-3">AI Verdict</th>
+                          <th className="p-3 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {bounties.map((b) => (
+                          <tr key={b.bounty_id} className="hover:bg-slate-900/40 transition-colors">
+                            <td className="p-3 font-bold text-cyan-400">#{b.bounty_id}</td>
+                            <td className="p-3 text-slate-300 font-semibold">{b.scope_repository}</td>
+                            <td className="p-3 text-slate-400">{b.vulnerability_title || 'N/A'}</td>
+                            <td className="p-3">
+                              <span className="font-bold text-white">{b.severity_score}/100</span>
+                            </td>
+                            <td className="p-3">
+                              <span className="font-bold text-emerald-400">{b.reproducibility_score}%</span>
+                            </td>
+                            <td className="p-3">
+                              <span className="text-[11px] font-semibold text-slate-300">{b.verdict}</span>
+                            </td>
+                            <td className="p-3 text-right">
+                              <button
+                                onClick={() => {
+                                  setSelectedBountyForDocked(b);
+                                  setCurrentView('war_room');
+                                }}
+                                className="px-3 py-1 rounded-xl bg-cyan-950 border border-cyan-800 text-cyan-300 hover:text-white text-[11px] transition-colors"
+                              >
+                                Inspect In SOC
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
-              <h4 className="font-display font-bold text-white text-base">
-                Escrow Locking & Scope Commitment
-              </h4>
-              <p className="text-xs font-mono text-slate-400 leading-relaxed">
-                Protocols lock native GEN into <code>create_audit_bounty</code> defining the repository scope. Researchers submit findings with a SHA-256 cryptographic report commitment preventing bait-and-switch.
-              </p>
-            </div>
+            )}
 
-            <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
-              <div className="w-9 h-9 rounded-xl bg-emerald-950 border border-emerald-800 flex items-center justify-center text-emerald-400 font-mono font-bold text-sm">
-                2
+            {/* ── WORKSPACE VIEW 3: SUPREME APPELLATE COURT ── */}
+            {currentView === 'appellate_court' && (
+              <AppellateCourtView
+                bounties={bounties}
+                account={account}
+                onOpenAppeal={(b) => setSelectedBountyForAppeal(b)}
+                onTriggerAppealAdjudicate={handleTriggerAppealAdjudicate}
+                onSelectBounty={(b) => {
+                  setSelectedBountyForDocked(b);
+                  setCurrentView('war_room');
+                }}
+                isProcessingAction={processingAction}
+              />
+            )}
+
+            {/* ── WORKSPACE VIEW 4: WHITEHAT & PROTOCOL REGISTRY ── */}
+            {currentView === 'auditor_registry' && (
+              <AuditorRegistryView
+                bounties={bounties}
+                onInspectBounty={(b) => {
+                  setSelectedBountyForDocked(b);
+                  setCurrentView('war_room');
+                }}
+                onViewCertificate={(b) => setSelectedBountyForCertificate(b)}
+              />
+            )}
+          </main>
+
+          {/* Footer */}
+          <footer className="border-t border-slate-900 bg-[#04060C] py-6 px-6 text-xs font-mono text-slate-500">
+            <div className="max-w-[1700px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <Shield className="w-4 h-4 text-cyan-400" />
+                <span className="text-slate-300 font-bold">AgentSecScan Protocol SOC</span>
+                <span>• Live on GenLayer Studionet</span>
               </div>
-              <h4 className="font-display font-bold text-white text-base">
-                Autonomous AI Security Jury
-              </h4>
-              <p className="text-xs font-mono text-slate-400 leading-relaxed">
-                GenLayer validators execute <code>gl.nondet.web.render</code> to retrieve the report and PoC script. A sandboxed LLM extracts severity (0-100) & reproducibility (0-100%) with semantic consensus on the verdict.
-              </p>
-            </div>
-
-            <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
-              <div className="w-9 h-9 rounded-xl bg-purple-950 border border-purple-800 flex items-center justify-center text-purple-400 font-mono font-bold text-sm">
-                3
+              <div className="flex items-center gap-5">
+                <span>Chain ID: {STUDIONET_CHAIN_ID}</span>
+                <span className="text-slate-600">|</span>
+                <a
+                  href="https://studio.genlayer.com"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-cyan-400 hover:underline flex items-center gap-1"
+                >
+                  GenLayer Studio <ExternalLink className="w-3 h-3" />
+                </a>
               </div>
-              <h4 className="font-display font-bold text-white text-base">
-                24-Block Court & Pull Payment
-              </h4>
-              <p className="text-xs font-mono text-slate-400 leading-relaxed">
-                A 24-block (~72s) cooling window permits appeals with a 10% staked bond. Uncontested or upheld decisions trigger automatic disbursements or safe pull-payments with double-payout elimination.
-              </p>
             </div>
-          </div>
+          </footer>
         </div>
-      </main>
+      </div>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-900 bg-[#070A12] py-8 text-xs font-mono text-slate-500">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Shield className="w-4 h-4 text-cyan-400" />
-            <span className="text-slate-300 font-semibold">AgentSecScan Protocol</span>
-            <span>• Deployed on GenLayer Studionet</span>
-          </div>
+      {/* ── ALL MODALS ── */}
 
-          <div className="flex items-center gap-4">
-            <span className="text-slate-400">Chain ID: {STUDIONET_CHAIN_ID}</span>
-            <a
-              href="https://studio.genlayer.com"
-              target="_blank"
-              rel="noreferrer"
-              className="text-cyan-400 hover:underline flex items-center gap-1"
-            >
-              GenLayer Studio <ExternalLink className="w-3 h-3" />
-            </a>
-          </div>
-        </div>
-      </footer>
-
-      {/* Modals */}
+      {/* 1. Create Bounty Modal */}
       <CreateBountyModal
         isOpen={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
@@ -562,6 +703,7 @@ export const App: React.FC = () => {
         onSuccess={loadData}
       />
 
+      {/* 2. Submit Deliverable Modal */}
       <SubmitDeliverableModal
         isOpen={Boolean(selectedBountyForDeliverable)}
         onClose={() => setSelectedBountyForDeliverable(null)}
@@ -571,6 +713,7 @@ export const App: React.FC = () => {
         onSuccess={loadData}
       />
 
+      {/* 3. Full Audit Inspector Modal (Alternative to Docked) */}
       <AuditInspectorModal
         isOpen={Boolean(selectedBountyForInspector)}
         onClose={() => setSelectedBountyForInspector(null)}
@@ -578,6 +721,7 @@ export const App: React.FC = () => {
         onViewCertificate={(b) => setSelectedBountyForCertificate(b)}
       />
 
+      {/* 4. Appeal Modal */}
       <AppealModal
         isOpen={Boolean(selectedBountyForAppeal)}
         onClose={() => setSelectedBountyForAppeal(null)}
@@ -587,6 +731,7 @@ export const App: React.FC = () => {
         onSuccess={loadData}
       />
 
+      {/* 5. Holographic Certificate Modal */}
       <HolographicCertificateModal
         isOpen={Boolean(selectedBountyForCertificate)}
         onClose={() => setSelectedBountyForCertificate(null)}
@@ -594,6 +739,7 @@ export const App: React.FC = () => {
         contractAddress={contractAddress}
       />
 
+      {/* 6. Consensus Terminal Modal */}
       <ConsensusTerminalModal
         isOpen={terminalOpen}
         onClose={() => setTerminalOpen(false)}
@@ -603,6 +749,127 @@ export const App: React.FC = () => {
         errorMessage={terminalError}
         txHash={terminalTxHash}
       />
+
+      {/* 7. Settings Modal (Contract Switcher) */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="bg-[#0B1021] border border-cyan-500/40 rounded-3xl p-6 max-w-md w-full space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Settings className="w-5 h-5 text-cyan-400" />
+                <h3 className="font-display font-bold text-lg text-white">Protocol Configuration</h3>
+              </div>
+              <button
+                onClick={() => setIsSettingsOpen(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 font-mono text-xs">
+              <label className="block text-slate-300 font-semibold">Contract Address</label>
+              <input
+                type="text"
+                value={tempContractAddress}
+                onChange={(e) => setTempContractAddress(e.target.value)}
+                placeholder="0x..."
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500 font-mono"
+              />
+              <p className="text-[11px] text-slate-500">
+                Current active contract deployed on GenLayer Studionet (Chain ID 61999).
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => {
+                  setTempContractAddress(DEFAULT_CONTRACT_ADDRESS);
+                  saveContractAddress(DEFAULT_CONTRACT_ADDRESS);
+                  setContractAddress(DEFAULT_CONTRACT_ADDRESS);
+                  setIsSettingsOpen(false);
+                  loadData();
+                }}
+                className="px-4 py-2 rounded-xl bg-slate-900 text-slate-300 hover:text-white text-xs font-mono"
+              >
+                Reset Default
+              </button>
+              <button
+                onClick={() => {
+                  saveContractAddress(tempContractAddress);
+                  setContractAddress(tempContractAddress);
+                  setIsSettingsOpen(false);
+                  loadData();
+                }}
+                className="px-5 py-2 rounded-xl bg-cyan-500 text-slate-950 font-bold text-xs font-mono hover:bg-cyan-400 shadow-lg"
+              >
+                Save Address
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. Role Guide Modal (RBAC Permissions) */}
+      {isRoleGuideOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="bg-[#0B1021] border border-cyan-500/40 rounded-3xl p-6 sm:p-8 max-w-xl w-full space-y-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <HelpCircle className="w-5 h-5 text-cyan-400" />
+                <h3 className="font-display font-bold text-lg text-white">
+                  On-Chain Role-Based Access Control (RBAC)
+                </h3>
+              </div>
+              <button
+                onClick={() => setIsRoleGuideOpen(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 font-mono text-xs">
+              <div className="p-4 rounded-2xl bg-cyan-950/30 border border-cyan-800/40 space-y-1.5">
+                <div className="flex items-center gap-2 text-cyan-300 font-bold text-sm">
+                  <Building className="w-4 h-4 text-cyan-400" />
+                  <span>Sponsoring Protocol / DAO</span>
+                </div>
+                <p className="text-slate-300 text-[11px] leading-relaxed">
+                  Locks GEN tokens into escrow, defines codebase repository scope. If an audit finding is contested, the protocol team can appeal within the 24-block (~72s) window or reclaim unfulfilled escrows after expiry.
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-emerald-950/30 border border-emerald-800/40 space-y-1.5">
+                <div className="flex items-center gap-2 text-emerald-300 font-bold text-sm">
+                  <UserCheck className="w-4 h-4 text-emerald-400" />
+                  <span>Whitehat Security Researcher</span>
+                </div>
+                <p className="text-slate-300 text-[11px] leading-relaxed">
+                  Submits audit report and reproducible PoC exploit script with cryptographic SHA-256 evidence snapshot. Receives 100% payout for critical verified flaws or 40% for medium findings.
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-purple-950/30 border border-purple-800/40 space-y-1.5">
+                <div className="flex items-center gap-2 text-purple-300 font-bold text-sm">
+                  <Scale className="w-4 h-4 text-purple-400" />
+                  <span>Dispute Appellant & Supreme Court</span>
+                </div>
+                <p className="text-slate-300 text-[11px] leading-relaxed">
+                  Either party may contest a jury verdict by staking a 10% dispute bond and submitting supplemental Foundry traces. If upheld, the bond is refunded and awards reallocated.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setIsRoleGuideOpen(false)}
+              className="w-full py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold font-mono text-xs transition-all shadow-lg"
+            >
+              Understood
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -292,3 +292,55 @@ def test_agentsecscan_dispute_and_appeal_flow(client):
     b_final = json.loads(contract.get_bounty(args=[bounty_id]).call())
     assert b_final["status"] == 3  # STATUS_SETTLED_PAID_FULL
     assert b_final["verdict"] == "VULNERABILITY_CONFIRMED_FULL"
+
+
+def test_agentsecscan_reclaim_stalled_unresolved_bounty(client):
+    """Proves that a bounty stalled in STATUS_UNRESOLVED past expiry can be safely reclaimed by the protocol."""
+    contract = client.deploy("contracts/contract.py")
+    protocol = client.accounts[0]
+    whitehat = client.accounts[1]
+
+    # Create bounty with short duration (e.g. 10 blocks ~ 30s)
+    tx_create = contract.connect(protocol).create_audit_bounty(
+        args=["https://github.com/defi/stalled-test", 10],
+        value=1500000000000000000  # 1.5 GEN
+    )
+    bounty_id = str(tx_create.return_value)
+
+    # Deliverable submitted with invalid link leading to 404
+    contract.connect(whitehat).submit_audit_deliverable(
+        args=[
+            bounty_id,
+            "Broken test deliverable",
+            "https://404-dead-domain.io/report.txt",
+            "a" * 64,
+            "https://404-dead-domain.io/poc.sol"
+        ]
+    )
+
+    client.provider.make_request(
+        method="sim_installMocks",
+        params={
+            "web_mocks": {".*": {"status": 404, "body": ""}}
+        }
+    )
+
+    # Adjudication puts it into STATUS_UNRESOLVED
+    contract.connect(protocol).adjudicate_security_audit(args=[bounty_id])
+    b_unresolved = json.loads(contract.get_bounty(args=[bounty_id]).call())
+    assert b_unresolved["status"] == 8  # STATUS_UNRESOLVED
+
+    # If protocol attempts to reclaim BEFORE expiry, it must revert
+    with pytest.raises(Exception) as exc_info:
+        contract.connect(protocol).cancel_or_reclaim(args=[bounty_id])
+    assert "Bounty duration is still active" in str(exc_info.value)
+
+    # Advance time past expires_at_time (10 blocks * 3s = 30s)
+    contract.advance_time(35)
+
+    # Protocol successfully reclaims escrow
+    contract.connect(protocol).cancel_or_reclaim(args=[bounty_id])
+    b_cancelled = json.loads(contract.get_bounty(args=[bounty_id]).call())
+    assert b_cancelled["status"] == 7  # STATUS_CANCELLED
+    assert b_cancelled["escrow_amount"] == "0"
+
