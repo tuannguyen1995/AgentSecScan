@@ -30,6 +30,29 @@ class ContractError(Exception):
     pass
 
 
+def _to_address(addr) -> Address:
+    """Safely coerce any incoming value (int, hex str, Address) into a valid Address instance."""
+    if isinstance(addr, Address):
+        return addr
+    try:
+        if isinstance(addr, int):
+            hex_str = hex(addr)[2:].rjust(40, "0")
+            return Address(f"0x{hex_str}")
+        if isinstance(addr, str):
+            clean = addr.strip()
+            if clean.startswith("0x") or clean.startswith("0X"):
+                return Address(clean.lower())
+            try:
+                int_val = int(clean)
+                hex_str = hex(int_val)[2:].rjust(40, "0")
+                return Address(f"0x{hex_str}")
+            except Exception:
+                return Address(f"0x{clean}")
+    except Exception:
+        pass
+    return Address(ZERO_ADDRESS)
+
+
 def _addr_str(addr: Address) -> str:
     """Safely format an Address instance into a lowercase hex string."""
     try:
@@ -106,7 +129,8 @@ class Contract(gl.Contract):
         except Exception:
             pass
 
-        target_owner = initial_owner if _addr_str(initial_owner) != ZERO_ADDRESS else deployer
+        owner_candidate = _to_address(initial_owner)
+        target_owner = owner_candidate if _addr_str(owner_candidate) != ZERO_ADDRESS else deployer
         self.owner = target_owner
         self.total_bounty_locked = bigint(0)
         self.total_audits_settled = u32(0)
