@@ -4,7 +4,7 @@
 
 [![GenLayer Studionet](https://img.shields.io/badge/GenLayer-Studionet%20(61999)-06B6D4?style=for-the-badge&logo=ethereum)](https://studio.genlayer.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-10B981?style=for-the-badge)](LICENSE)
-[![Tests: Passing](https://img.shields.io/badge/Tests-5%2F5%20Passing-10B981?style=for-the-badge)](tests/)
+[![Tests: Passing](https://img.shields.io/badge/Tests-6%2F6%20Passing-10B981?style=for-the-badge)](tests/)
 
 ---
 
@@ -52,10 +52,9 @@ Every year, Web3 protocols (DeFi, Bridges, L2 rollups) pay tens of millions of d
 | **Network** | GenLayer Studionet |
 | **Chain ID** | `61999` (Hex: `0xF22F`) |
 | **RPC Endpoint** | `https://studio.genlayer.com/api` |
-| **Contract Address** | `0xe991eb664f0e4551545929600b8cfe0Fc8EB9941` |
-| **Deployment TX** | `0xa9f5c6df4afdeb272273d6eb9210aca520d99059d24866d5e980ab61808bf5d0` |
-| **Consensus Result** | `SUCCESS` (Verified on Studionet) |
-| **Live Web3 dApp** | [https://agentsecscan-frontend.vercel.app](https://agentsecscan-frontend.vercel.app) |
+| **Contract Address** | `0x906d609F9a44329b5eBC6F8e5D4Cea46d345713f` |
+| **Live Web3 dApp (Primary)** | [https://agentsecscan.vercel.app](https://agentsecscan.vercel.app) |
+| **Live Web3 dApp (Mirror)** | [https://agentsecscan-frontend.vercel.app](https://agentsecscan-frontend.vercel.app) |
 
 ---
 
