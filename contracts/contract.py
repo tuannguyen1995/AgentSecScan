@@ -734,6 +734,8 @@ Respond ONLY with valid JSON:
         if _addr_str(_get_sender()) != _addr_str(b.protocol_team):
             raise ContractError("Role Violation: Only protocol team can reclaim expired bounty escrow.")
 
+        current_time = self._get_current_timestamp()
+
         # Allow reclaim if no deliverable submitted OR if stalled in UNRESOLVED and past expiry
         if b.status in (STATUS_BOUNTY_OPEN, STATUS_UNRESOLVED):
             if current_time < b.expires_at_time:
