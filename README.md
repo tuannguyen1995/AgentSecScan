@@ -53,7 +53,7 @@ Every year, Web3 protocols (DeFi, Bridges, L2 rollups) pay tens of millions of d
 | **Network** | GenLayer Studionet |
 | **Chain ID** | `61999` (Hex: `0xF22F`) |
 | **RPC Endpoint** | `https://studio.genlayer.com/api` |
-| **Contract Address** | `0xe6B4F9E6dB77B6DdCAc6726de739d7A6C50EDAF4` |
+| **Contract Address** | `0xe6a7De45984C69225c04676BF3af3129fD642bAA` |
 | **Live Web3 dApp (Primary)** | [https://agentsecscan.vercel.app](https://agentsecscan.vercel.app) |
 | **Live Web3 dApp (Mirror)** | [https://agentsecscan-frontend.vercel.app](https://agentsecscan-frontend.vercel.app) |
 
