@@ -53,7 +53,7 @@ interface DockedInspectorProps {
   onOpenAppeal: (bounty: AuditBountyData) => void;
   onViewCertificate: (bounty: AuditBountyData) => void;
   onTriggerAdjudicate: (bountyId: string) => Promise<void>;
-  onTriggerAppealAdjudicate: (bountyId: string) => Promise<void>;
+  onTriggerAppealAdjudicate: (bountyId: string, newEvidenceUrl?: string) => Promise<void>;
   onTriggerFinalize: (bountyId: string) => Promise<void>;
   onTriggerReclaim: (bountyId: string) => Promise<void>;
   onTriggerRefundBond?: (bountyId: string) => Promise<void>;
@@ -315,7 +315,19 @@ export const DockedInspector: React.FC<DockedInspectorProps> = ({
         {bounty.status === STATUS_UNRESOLVED && BigInt(bounty.dispute_bond || '0') > 0n && (
           <div className="space-y-2">
             <button
-              onClick={() => onTriggerAppealAdjudicate(bounty.bounty_id)}
+              onClick={() => {
+                if (account && account.toLowerCase() === bounty.dispute_initiator?.toLowerCase()) {
+                  const updated = window.prompt(
+                    'Enter updated supplemental trace URL (leave blank to keep current URL):',
+                    bounty.supplemental_evidence_url || ''
+                  );
+                  if (updated !== null) {
+                    onTriggerAppealAdjudicate(bounty.bounty_id, updated.trim());
+                  }
+                } else {
+                  onTriggerAppealAdjudicate(bounty.bounty_id);
+                }
+              }}
               disabled={Boolean(isProcessingAction)}
               className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-400 hover:to-indigo-400 text-white font-bold text-xs font-mono transition-all shadow-[0_0_20px_rgba(168,85,247,0.35)] disabled:opacity-50"
             >

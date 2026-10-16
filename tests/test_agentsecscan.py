@@ -465,12 +465,12 @@ def test_agentsecscan_appeal_fetch_failure_retry_and_bond_refund(client):
     )
     assert int(contract.get_total_bounty_locked().call()) == escrow_amount + dispute_bond
 
-    # First attempt fails again (e.g. server temporary glitch)
+    # First attempt fails due to dead initial URL
     client.provider.make_request(
         method="sim_installMocks",
         params={
             "web_mocks": {
-                "https://audit.io/appellate_trace_fixed.txt": {"status": 500, "body": ""}
+                "https://audit.io/appellate_trace_fixed.txt": {"status": 404, "body": ""}
             }
         }
     )
@@ -479,7 +479,16 @@ def test_agentsecscan_appeal_fetch_failure_retry_and_bond_refund(client):
     assert b_retry_unres["status"] == 8  # STATUS_UNRESOLVED
     assert b_retry_unres["dispute_bond"] == str(dispute_bond)
 
-    # Endpoint comes back online: retry appeal adjudication!
+    # 8. Test retry with NEW evidence URL:
+    # Non-initiator cannot change the URL
+    with pytest.raises(Exception) as exc_info:
+        contract.connect(protocol).adjudicate_appeal(
+            args=[bounty_id, "https://audit.io/brand_new_trace.txt"]
+        )
+    assert "Only the dispute initiator can update the appeal evidence URL" in str(exc_info.value)
+
+    # Appellant provides a brand new valid supplemental trace URL
+    new_trace_url = "https://audit.io/brand_new_trace.txt"
     client.provider.make_request(
         method="sim_installMocks",
         params={
@@ -491,7 +500,7 @@ def test_agentsecscan_appeal_fetch_failure_retry_and_bond_refund(client):
                 })
             },
             "web_mocks": {
-                "https://audit.io/appellate_trace_fixed.txt": {
+                new_trace_url: {
                     "status": 200,
                     "body": "Foundry Trace: CALL Exploit.fallback() SUCCESS. Balance drained: 100 ETH."
                 }
@@ -499,15 +508,17 @@ def test_agentsecscan_appeal_fetch_failure_retry_and_bond_refund(client):
         }
     )
 
-    # Execution must succeed from STATUS_UNRESOLVED because dispute_bond > 0
-    contract.connect(protocol).adjudicate_appeal(args=[bounty_id])
+    # Appellant retries with new_evidence_url parameter
+    contract.connect(whitehat).adjudicate_appeal(args=[bounty_id, new_trace_url])
 
     b_success = json.loads(contract.get_bounty(args=[bounty_id]).call())
+    assert b_success["supplemental_evidence_url"] == new_trace_url
     assert b_success["status"] == 3  # STATUS_SETTLED_PAID_FULL
     assert b_success["verdict"] == "VULNERABILITY_CONFIRMED_FULL"
     assert b_success["dispute_bond"] == "0"
     assert b_success["escrow_amount"] == "0"
     # Accounting check: total locked should now be 0 after settlement payout
     assert int(contract.get_total_bounty_locked().call()) == 0
+
 
 

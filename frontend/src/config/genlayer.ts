@@ -8,7 +8,7 @@ export const STUDIONET_RPC_URL = 'https://studio.genlayer.com/api';
 export const STUDIO_URL = 'https://studio.genlayer.com';
 
 // Authoritative Intelligent Contract deployed on GenLayer Studionet
-export const DEFAULT_CONTRACT_ADDRESS = '0x0e7c3B71B9782a75862d0b239B2ef3A54E630808';
+export const DEFAULT_CONTRACT_ADDRESS = '0xe6B4F9E6dB77B6DdCAc6726de739d7A6C50EDAF4';
 
 export function getSavedContractAddress(): string {
   if (typeof window !== 'undefined') {
@@ -404,16 +404,19 @@ export async function appealVerdict(
 export async function adjudicateAppeal(
   contractAddress: string,
   userAddress: string,
-  bountyId: string
+  bountyId: string,
+  newEvidenceUrl: string = ''
 ) {
   const client = getGenLayerClient(userAddress);
+  const args = newEvidenceUrl ? [bountyId, newEvidenceUrl] : [bountyId];
   return await client.writeContract({
     address: contractAddress as `0x${string}`,
     functionName: 'adjudicate_appeal',
-    args: [bountyId],
+    args,
     value: 0n,
   });
 }
+
 
 /**
  * Appellant reclaims 100% dispute bond if appeal stalled in unresolvable error

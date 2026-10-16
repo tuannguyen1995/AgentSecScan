@@ -7,7 +7,7 @@ interface AppellateCourtViewProps {
   bounties: AuditBountyData[];
   account: string;
   onOpenAppeal: (bounty: AuditBountyData) => void;
-  onTriggerAppealAdjudicate: (bountyId: string) => Promise<void>;
+  onTriggerAppealAdjudicate: (bountyId: string, newEvidenceUrl?: string) => Promise<void>;
   onTriggerRefundBond?: (bountyId: string) => Promise<void>;
   onSelectBounty: (bounty: AuditBountyData) => void;
   isProcessingAction?: string | null;
@@ -142,7 +142,19 @@ export const AppellateCourtView: React.FC<AppellateCourtViewProps> = ({
                       )}
 
                       <button
-                        onClick={() => onTriggerAppealAdjudicate(b.bounty_id)}
+                        onClick={() => {
+                          if (isUnresolvedAppeal && isInitiator) {
+                            const updated = window.prompt(
+                              'Enter updated supplemental trace URL (leave blank to keep current URL):',
+                              b.supplemental_evidence_url || ''
+                            );
+                            if (updated !== null) {
+                              onTriggerAppealAdjudicate(b.bounty_id, updated.trim());
+                            }
+                          } else {
+                            onTriggerAppealAdjudicate(b.bounty_id);
+                          }
+                        }}
                         disabled={Boolean(isProcessingAction)}
                         className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-400 hover:to-indigo-400 text-white font-bold text-xs font-mono transition-all shadow-[0_0_20px_rgba(168,85,247,0.3)] disabled:opacity-50"
                       >

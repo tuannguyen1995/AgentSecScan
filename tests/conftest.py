@@ -333,6 +333,14 @@ class _MockContractInstance:
         if int(b.get("dispute_bond", 0)) <= 0:
             raise ValueError("No active dispute bond staked for this appeal.")
 
+        new_evidence_url = str(args[1]).strip() if len(args) > 1 else ""
+        if new_evidence_url:
+            if self.caller != b["dispute_initiator"]:
+                raise ValueError("Permission Denied: Only the dispute initiator can update the appeal evidence URL.")
+            if not (new_evidence_url.startswith("http://") or new_evidence_url.startswith("https://")):
+                raise ValueError("Valid public supplemental PoC / trace URL required.")
+            b["supplemental_evidence_url"] = new_evidence_url
+
         mocks = self.client.provider.installed_mocks
         web_mocks = mocks.get("web_mocks", {})
         llm_mocks = mocks.get("llm_mocks", {})
@@ -485,6 +493,7 @@ class _MockContractInstance:
         self.total_bounty_locked -= bond_val
         b["status"] = STATUS_AWAITING_PAYOUT
         b["verdict"] = b.get("appeal_prior_verdict") or b.get("original_verdict") or "CLAIM_REJECTED_INVALID"
+        b["audit_completed_time"] = str(self._get_time())
         b["reason"] = f"[APPEAL CANCELLED]: Dispute bond ({bond_val} wei) refunded to appellant. Prior verdict restored."
         return _MockTxResult(None)
 

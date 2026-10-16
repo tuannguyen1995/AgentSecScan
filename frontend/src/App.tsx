@@ -269,7 +269,7 @@ export const App: React.FC = () => {
   };
 
   // Action: Adjudicate Appeal
-  const handleTriggerAppealAdjudicate = async (bountyId: string) => {
+  const handleTriggerAppealAdjudicate = async (bountyId: string, newEvidenceUrl: string = '') => {
     if (!account) return alert('Please connect wallet');
 
     try {
@@ -281,9 +281,10 @@ export const App: React.FC = () => {
       setTerminalTxHash(undefined);
       setTerminalOpen(true);
 
-      const res = await adjudicateAppeal(contractAddress, account, bountyId);
+      const res = await adjudicateAppeal(contractAddress, account, bountyId, newEvidenceUrl);
       const tx = typeof res === 'string' ? res : (res as any)?.hash || (res as any)?.transactionHash;
       if (tx) setTerminalTxHash(String(tx));
+
 
       setTerminalStatus('success');
       await loadData();
