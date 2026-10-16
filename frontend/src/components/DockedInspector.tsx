@@ -56,6 +56,7 @@ interface DockedInspectorProps {
   onTriggerAppealAdjudicate: (bountyId: string) => Promise<void>;
   onTriggerFinalize: (bountyId: string) => Promise<void>;
   onTriggerReclaim: (bountyId: string) => Promise<void>;
+  onTriggerRefundBond?: (bountyId: string) => Promise<void>;
   isProcessingAction?: string | null;
 }
 
@@ -70,6 +71,7 @@ export const DockedInspector: React.FC<DockedInspectorProps> = ({
   onTriggerAppealAdjudicate,
   onTriggerFinalize,
   onTriggerReclaim,
+  onTriggerRefundBond,
   isProcessingAction,
 }) => {
   if (!bounty) {
@@ -309,8 +311,32 @@ export const DockedInspector: React.FC<DockedInspectorProps> = ({
           </>
         )}
 
-        {/* State 1 / 8: Ready for Jury */}
-        {(bounty.status === STATUS_REPORT_SUBMITTED || bounty.status === STATUS_UNRESOLVED) && (
+        {/* State: Appeal Unresolved Error -> Retry Appellate Trace or Refund Bond */}
+        {bounty.status === STATUS_UNRESOLVED && BigInt(bounty.dispute_bond || '0') > 0n && (
+          <div className="space-y-2">
+            <button
+              onClick={() => onTriggerAppealAdjudicate(bounty.bounty_id)}
+              disabled={Boolean(isProcessingAction)}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-400 hover:to-indigo-400 text-white font-bold text-xs font-mono transition-all shadow-[0_0_20px_rgba(168,85,247,0.35)] disabled:opacity-50"
+            >
+              <Scale className="w-4 h-4" />
+              <span>Retry Appellate Trace Adjudication</span>
+            </button>
+
+            {account && account.toLowerCase() === bounty.dispute_initiator?.toLowerCase() && onTriggerRefundBond && (
+              <button
+                onClick={() => onTriggerRefundBond(bounty.bounty_id)}
+                disabled={Boolean(isProcessingAction)}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-amber-950 hover:bg-amber-900 border border-amber-500/60 text-amber-300 font-bold text-xs font-mono transition-all disabled:opacity-50"
+              >
+                <span>Refund 100% Staked Dispute Bond</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* State 1 / 8 (Initial review unresolved): Ready for Jury */}
+        {(bounty.status === STATUS_REPORT_SUBMITTED || (bounty.status === STATUS_UNRESOLVED && BigInt(bounty.dispute_bond || '0') === 0n)) && (
           <button
             onClick={() => onTriggerAdjudicate(bounty.bounty_id)}
             disabled={Boolean(isProcessingAction)}

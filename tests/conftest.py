@@ -328,11 +328,28 @@ class _MockContractInstance:
             raise ValueError(f"Bounty {bid} does not exist.")
 
         b = self.bounties[bid]
-        if b["status"] != STATUS_DISPUTED:
-            raise ValueError("Bounty is not in DISPUTED status.")
+        if b["status"] not in (STATUS_DISPUTED, STATUS_UNRESOLVED):
+            raise ValueError("Bounty is not in DISPUTED or appellate UNRESOLVED status.")
+        if int(b.get("dispute_bond", 0)) <= 0:
+            raise ValueError("No active dispute bond staked for this appeal.")
 
         mocks = self.client.provider.installed_mocks
+        web_mocks = mocks.get("web_mocks", {})
         llm_mocks = mocks.get("llm_mocks", {})
+
+        bound_url = b.get("supplemental_evidence_url", "")
+        def match_web(target):
+            for pattern, resp in web_mocks.items():
+                if pattern == target or re.search(pattern, target):
+                    return resp
+            return {"status": 404, "body": ""}
+
+        resp_trace = match_web(bound_url)
+        if resp_trace.get("status") != 200 or not resp_trace.get("body"):
+            b["status"] = STATUS_UNRESOLVED
+            b["verdict"] = "APPEAL_UNRESOLVED_FETCH_FAILED"
+            b["reason"] = "[APPEAL UNRESOLVED] Supplemental trace URL unreachable."
+            return _MockTxResult(None)
 
         matched_llm = None
         for pattern, raw_resp in llm_mocks.items():
@@ -437,9 +454,38 @@ class _MockContractInstance:
         b["status"] = STATUS_CANCELLED
         b["verdict"] = "CANCELLED"
         b["reason"] = "Bounty duration completed without valid deliverables. Escrow reclaimed by protocol."
+
+        if int(b.get("dispute_bond", 0)) > 0:
+            bond_val = int(b["dispute_bond"])
+            b["dispute_bond"] = "0"
+            self.total_bounty_locked -= bond_val
+
         escrow_val = int(b["escrow_amount"])
         b["escrow_amount"] = "0"
         self.total_bounty_locked -= escrow_val
+        return _MockTxResult(None)
+
+    def refund_dispute_bond(self, args):
+        bid = str(args[0]).strip()
+        if bid not in self.bounties:
+            raise ValueError(f"Bounty {bid} does not exist.")
+
+        b = self.bounties[bid]
+        if self.caller != b["dispute_initiator"]:
+            raise ValueError("Role Violation: Only dispute initiator can refund dispute bond.")
+
+        bond_val = int(b.get("dispute_bond", 0))
+        if bond_val <= 0:
+            raise ValueError("No active dispute bond available to refund.")
+
+        if b["status"] != STATUS_UNRESOLVED or not str(b["verdict"]).startswith("APPEAL_UNRESOLVED_"):
+            raise ValueError("Dispute bond can only be refunded if appeal reached an unresolvable state.")
+
+        b["dispute_bond"] = "0"
+        self.total_bounty_locked -= bond_val
+        b["status"] = STATUS_AWAITING_PAYOUT
+        b["verdict"] = b.get("appeal_prior_verdict") or b.get("original_verdict") or "CLAIM_REJECTED_INVALID"
+        b["reason"] = f"[APPEAL CANCELLED]: Dispute bond ({bond_val} wei) refunded to appellant. Prior verdict restored."
         return _MockTxResult(None)
 
     def claim_payout(self):
@@ -474,6 +520,10 @@ class _MockContractInstance:
             "owner": self.owner,
         }
         return _MockCallResult(json.dumps(data))
+
+    def get_total_bounty_locked(self, args=None):
+        return _MockCallResult(str(self.total_bounty_locked))
+
 
 
 class _MockProvider:

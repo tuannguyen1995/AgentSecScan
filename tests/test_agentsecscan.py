@@ -344,3 +344,170 @@ def test_agentsecscan_reclaim_stalled_unresolved_bounty(client):
     assert b_cancelled["status"] == 7  # STATUS_CANCELLED
     assert b_cancelled["escrow_amount"] == "0"
 
+
+def test_agentsecscan_appeal_fetch_failure_retry_and_bond_refund(client):
+    """
+    Focused test addressing Steward review:
+    1. Proves that appeal fetch failure moves status to UNRESOLVED without stranding the dispute bond.
+    2. Proves that the appeal remains retryable once the supplemental trace is restored.
+    3. Proves that the appellant can alternatively reclaim/refund 100% of their dispute bond.
+    4. Verifies total locked accounting and stored bond are updated consistently at each step.
+    """
+    contract = client.deploy("contracts/contract.py")
+    protocol = client.accounts[0]
+    whitehat = client.accounts[1]
+
+    # 1. Create bounty for 1.0 GEN
+    escrow_amount = 1000000000000000000  # 1.0 GEN
+    tx_create = contract.connect(protocol).create_audit_bounty(
+        args=["https://github.com/protocol/vault-v2", 1000],
+        value=escrow_amount
+    )
+    bounty_id = str(tx_create.return_value)
+    assert int(contract.get_total_bounty_locked().call()) == escrow_amount
+
+    # 2. Submit deliverable
+    rep_text = "Reentrancy vulnerability in withdrawal logic."
+    rep_hash = hashlib.sha256(rep_text.encode("utf-8")).hexdigest()
+    contract.connect(whitehat).submit_audit_deliverable(
+        args=[
+            bounty_id,
+            "Reentrancy PoC",
+            "https://audit.io/rep.txt",
+            rep_hash,
+            "https://audit.io/poc.sol"
+        ]
+    )
+
+    # 3. Initial adjudication: Claim rejected as invalid
+    client.provider.make_request(
+        method="sim_installMocks",
+        params={
+            "llm_mocks": {
+                ".*": json.dumps({
+                    "canary": "CANARY_AGENT_SEC_SCAN_V1",
+                    "verdict": "CLAIM_REJECTED_INVALID",
+                    "confidence": 85,
+                    "severity_score": 10,
+                    "reproducibility_score": 10,
+                    "reason": "Initial PoC lacks valid reentrancy trigger."
+                })
+            },
+            "web_mocks": {
+                "https://audit.io/rep.txt": {"status": 200, "body": rep_text},
+                "https://audit.io/poc.sol": {"status": 200, "body": "contract Exploit {}"}
+            }
+        }
+    )
+    contract.connect(protocol).adjudicate_security_audit(args=[bounty_id])
+    b_data = json.loads(contract.get_bounty(args=[bounty_id]).call())
+    assert b_data["status"] == 2  # STATUS_AWAITING_PAYOUT
+    assert b_data["verdict"] == "CLAIM_REJECTED_INVALID"
+
+    # 4. Whitehat files appeal with 10% bond (0.1 GEN)
+    dispute_bond = 100000000000000000  # 0.1 GEN
+    contract.advance_time(10)
+    contract.connect(whitehat).appeal_verdict(
+        args=[
+            bounty_id,
+            "Foundry reentrancy trace attached proving state drainage.",
+            "https://audit.io/appellate_trace.txt"
+        ],
+        value=dispute_bond
+    )
+
+    # Accounting check: total_bounty_locked must include escrow + dispute_bond
+    assert int(contract.get_total_bounty_locked().call()) == escrow_amount + dispute_bond
+
+    # 5. Adjudicate appeal when supplemental trace fails (404 fetch failure)
+    client.provider.make_request(
+        method="sim_installMocks",
+        params={
+            "web_mocks": {
+                "https://audit.io/appellate_trace.txt": {"status": 404, "body": ""}
+            }
+        }
+    )
+    contract.connect(protocol).adjudicate_appeal(args=[bounty_id])
+
+    b_unres = json.loads(contract.get_bounty(args=[bounty_id]).call())
+    assert b_unres["status"] == 8  # STATUS_UNRESOLVED
+    assert b_unres["verdict"] == "APPEAL_UNRESOLVED_FETCH_FAILED"
+    # CRITICAL: dispute bond must NOT be stranded or wiped!
+    assert b_unres["dispute_bond"] == str(dispute_bond)
+    assert int(contract.get_total_bounty_locked().call()) == escrow_amount + dispute_bond
+
+    # 6. Test refund_dispute_bond:
+    # Unauthorized caller cannot refund
+    with pytest.raises(Exception) as exc_info:
+        contract.connect(protocol).refund_dispute_bond(args=[bounty_id])
+    assert "Only dispute initiator can refund" in str(exc_info.value)
+
+    # Initiator (whitehat) reclaims bond
+    contract.connect(whitehat).refund_dispute_bond(args=[bounty_id])
+
+    b_refunded = json.loads(contract.get_bounty(args=[bounty_id]).call())
+    assert b_refunded["dispute_bond"] == "0"
+    assert b_refunded["status"] == 2  # STATUS_AWAITING_PAYOUT restored
+    assert b_refunded["verdict"] == "CLAIM_REJECTED_INVALID"  # Prior verdict restored
+    # Accounting check: total locked decremented by bond
+    assert int(contract.get_total_bounty_locked().call()) == escrow_amount
+
+    # 7. Test retryable appeal path:
+    # Appellant stakes bond again and files appeal
+    contract.connect(whitehat).appeal_verdict(
+        args=[
+            bounty_id,
+            "Retrying appeal with validated trace link.",
+            "https://audit.io/appellate_trace_fixed.txt"
+        ],
+        value=dispute_bond
+    )
+    assert int(contract.get_total_bounty_locked().call()) == escrow_amount + dispute_bond
+
+    # First attempt fails again (e.g. server temporary glitch)
+    client.provider.make_request(
+        method="sim_installMocks",
+        params={
+            "web_mocks": {
+                "https://audit.io/appellate_trace_fixed.txt": {"status": 500, "body": ""}
+            }
+        }
+    )
+    contract.connect(protocol).adjudicate_appeal(args=[bounty_id])
+    b_retry_unres = json.loads(contract.get_bounty(args=[bounty_id]).call())
+    assert b_retry_unres["status"] == 8  # STATUS_UNRESOLVED
+    assert b_retry_unres["dispute_bond"] == str(dispute_bond)
+
+    # Endpoint comes back online: retry appeal adjudication!
+    client.provider.make_request(
+        method="sim_installMocks",
+        params={
+            "llm_mocks": {
+                ".*": json.dumps({
+                    "canary": "CANARY_AGENT_SEC_SCAN_V1",
+                    "verdict": "APPEAL_UPHELD_FULL",
+                    "reason": "Supplemental trace proves reentrancy exploit successfully drained contract."
+                })
+            },
+            "web_mocks": {
+                "https://audit.io/appellate_trace_fixed.txt": {
+                    "status": 200,
+                    "body": "Foundry Trace: CALL Exploit.fallback() SUCCESS. Balance drained: 100 ETH."
+                }
+            }
+        }
+    )
+
+    # Execution must succeed from STATUS_UNRESOLVED because dispute_bond > 0
+    contract.connect(protocol).adjudicate_appeal(args=[bounty_id])
+
+    b_success = json.loads(contract.get_bounty(args=[bounty_id]).call())
+    assert b_success["status"] == 3  # STATUS_SETTLED_PAID_FULL
+    assert b_success["verdict"] == "VULNERABILITY_CONFIRMED_FULL"
+    assert b_success["dispute_bond"] == "0"
+    assert b_success["escrow_amount"] == "0"
+    # Accounting check: total locked should now be 0 after settlement payout
+    assert int(contract.get_total_bounty_locked().call()) == 0
+
+

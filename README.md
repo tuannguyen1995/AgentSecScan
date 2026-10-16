@@ -4,7 +4,7 @@
 
 [![GenLayer Studionet](https://img.shields.io/badge/GenLayer-Studionet%20(61999)-06B6D4?style=for-the-badge&logo=ethereum)](https://studio.genlayer.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-10B981?style=for-the-badge)](LICENSE)
-[![Tests: Passing](https://img.shields.io/badge/Tests-6%2F6%20Passing-10B981?style=for-the-badge)](tests/)
+[![Tests: Passing](https://img.shields.io/badge/Tests-7%2F7%20Passing-10B981?style=for-the-badge)](tests/)
 
 ---
 
@@ -41,6 +41,7 @@ Every year, Web3 protocols (DeFi, Bridges, L2 rollups) pay tens of millions of d
     - **`PARTIAL_SEVERITY_PAYOUT`** (40% to researcher, 60% refund to protocol).
     - **`CLAIM_REJECTED_INVALID`** (0% payout, 100% refund to protocol).
 - **24-Block Dispute Cooling-Off Window (`appeal_verdict`)**: A 24-block (~72 second) window permits either party to appeal to the Supreme Security Council by staking a **10% dispute bond** with supplemental Foundry debug traces.
+- **Retryable Appeals & Bond Refund Guarantee (`refund_dispute_bond`)**: If an appeal cannot be resolved due to unreachable endpoints or parse errors (`APPEAL_UNRESOLVED_*`), the staked bond is strictly protected: the appeal remains retryable once connectivity is restored, and the appellant can alternatively withdraw 100% of their staked bond with zero risk of stranded capital.
 - **Pull-Payment Safeguard (`claim_payout`)**: Safe disbursement buffer eliminating lost funds and re-entrancy risks.
 
 ---
@@ -52,7 +53,7 @@ Every year, Web3 protocols (DeFi, Bridges, L2 rollups) pay tens of millions of d
 | **Network** | GenLayer Studionet |
 | **Chain ID** | `61999` (Hex: `0xF22F`) |
 | **RPC Endpoint** | `https://studio.genlayer.com/api` |
-| **Contract Address** | `0x906d609F9a44329b5eBC6F8e5D4Cea46d345713f` |
+| **Contract Address** | `0x0e7c3B71B9782a75862d0b239B2ef3A54E630808` |
 | **Live Web3 dApp (Primary)** | [https://agentsecscan.vercel.app](https://agentsecscan.vercel.app) |
 | **Live Web3 dApp (Mirror)** | [https://agentsecscan-frontend.vercel.app](https://agentsecscan-frontend.vercel.app) |
 

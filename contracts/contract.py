@@ -521,8 +521,10 @@ Respond ONLY with valid JSON without markdown fences:
             raise ContractError(f"Bounty {bid} does not exist.")
 
         b = self.bounties[bid]
-        if b.status != STATUS_DISPUTED:
-            raise ContractError("Bounty is not in DISPUTED status.")
+        if b.status not in (STATUS_DISPUTED, STATUS_UNRESOLVED):
+            raise ContractError("Bounty is not in DISPUTED or appellate UNRESOLVED status.")
+        if b.dispute_bond <= bigint(0):
+            raise ContractError("No active dispute bond staked for this appeal.")
 
         sender_str = _addr_str(_get_sender())
         if (
@@ -676,6 +678,33 @@ Respond ONLY with valid JSON:
                 self._safe_transfer(b.protocol_team, escrow_val)
 
     @gl.public.write
+    def refund_dispute_bond(self, bounty_id: str) -> None:
+        """Allows appellant to cancel an unresolvable appeal and reclaim 100% staked dispute bond."""
+        self._ensure_owner()
+        bid = self._resolve_bid(bounty_id)
+        if bid not in self.bounties:
+            raise ContractError(f"Bounty {bid} does not exist.")
+
+        b = self.bounties[bid]
+        sender = _get_sender()
+        if _addr_str(sender) != _addr_str(b.dispute_initiator):
+            raise ContractError("Role Violation: Only dispute initiator can refund dispute bond.")
+
+        if b.dispute_bond <= bigint(0):
+            raise ContractError("No active dispute bond available to refund.")
+
+        if b.status != STATUS_UNRESOLVED or not str(b.verdict).startswith("APPEAL_UNRESOLVED_"):
+            raise ContractError("Dispute bond can only be refunded if appeal reached an unresolvable state.")
+
+        bond_val = b.dispute_bond
+        b.dispute_bond = bigint(0)
+        self.total_bounty_locked = self.total_bounty_locked - bond_val
+        b.status = STATUS_AWAITING_PAYOUT
+        b.verdict = b.appeal_prior_verdict if b.appeal_prior_verdict else b.original_verdict
+        b.reason = f"[APPEAL CANCELLED]: Dispute bond ({int(bond_val)} wei) refunded to appellant. Prior verdict restored."
+        self._safe_transfer(sender, bond_val)
+
+    @gl.public.write
     def finalize_settlement(self, bounty_id: str) -> None:
         """Executes uncontested settlement strictly after 24 blocks (~72s) cooling-off window."""
         self._ensure_owner()
@@ -746,6 +775,13 @@ Respond ONLY with valid JSON:
         b.status = STATUS_CANCELLED
         b.verdict = "CANCELLED"
         b.reason = "Bounty duration completed without valid deliverables. Escrow reclaimed by protocol."
+
+        # Refund stranded dispute bond to appellant if an appeal was stalled in UNRESOLVED
+        if b.dispute_bond > bigint(0):
+            bond_val = b.dispute_bond
+            b.dispute_bond = bigint(0)
+            self.total_bounty_locked = self.total_bounty_locked - bond_val
+            self._safe_transfer(b.dispute_initiator, bond_val)
 
         escrow_val = b.escrow_amount
         b.escrow_amount = bigint(0)
@@ -856,3 +892,7 @@ Respond ONLY with valid JSON:
             "owner": _addr_str(self.owner),
         }
         return json.dumps(data)
+
+    @gl.public.view
+    def get_total_bounty_locked(self) -> str:
+        return str(self.total_bounty_locked)

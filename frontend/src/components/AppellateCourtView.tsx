@@ -8,6 +8,7 @@ interface AppellateCourtViewProps {
   account: string;
   onOpenAppeal: (bounty: AuditBountyData) => void;
   onTriggerAppealAdjudicate: (bountyId: string) => Promise<void>;
+  onTriggerRefundBond?: (bountyId: string) => Promise<void>;
   onSelectBounty: (bounty: AuditBountyData) => void;
   isProcessingAction?: string | null;
 }
@@ -17,10 +18,13 @@ export const AppellateCourtView: React.FC<AppellateCourtViewProps> = ({
   account,
   onOpenAppeal,
   onTriggerAppealAdjudicate,
+  onTriggerRefundBond,
   onSelectBounty,
   isProcessingAction,
 }) => {
-  const disputedBounties = bounties.filter((b) => b.status === STATUS_DISPUTED);
+  const disputedBounties = bounties.filter(
+    (b) => b.status === STATUS_DISPUTED || (b.status === 8 && BigInt(b.dispute_bond || '0') > 0n)
+  );
   const coolingBounties = bounties.filter((b) => b.status === STATUS_AWAITING_PAYOUT);
 
   return (
@@ -56,14 +60,30 @@ export const AppellateCourtView: React.FC<AppellateCourtViewProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {disputedBounties.map((b) => {
               const isAppealing = isProcessingAction === `appeal_adjudicate_${b.bounty_id}`;
+              const isRefunding = isProcessingAction === `refund_bond_${b.bounty_id}`;
+              const isUnresolvedAppeal = b.status === 8 && BigInt(b.dispute_bond || '0') > 0n;
+              const isInitiator = account && account.toLowerCase() === b.dispute_initiator?.toLowerCase();
+
               return (
                 <div
                   key={b.bounty_id}
-                  className="p-5 rounded-3xl bg-[#0F172A] border border-purple-500/50 shadow-xl space-y-4 hover:border-purple-400 transition-all"
+                  className={`p-5 rounded-3xl bg-[#0F172A] border shadow-xl space-y-4 transition-all ${
+                    isUnresolvedAppeal
+                      ? 'border-amber-500/50 hover:border-amber-400'
+                      : 'border-purple-500/50 hover:border-purple-400'
+                  }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="font-mono font-bold text-xs text-purple-300 px-3 py-1 rounded-xl bg-purple-950/90 border border-purple-700">
-                      CASE #{b.bounty_id} • UNDER DISPUTE
+                    <span
+                      className={`font-mono font-bold text-xs px-3 py-1 rounded-xl border ${
+                        isUnresolvedAppeal
+                          ? 'text-amber-300 bg-amber-950/90 border-amber-700'
+                          : 'text-purple-300 bg-purple-950/90 border-purple-700'
+                      }`}
+                    >
+                      {isUnresolvedAppeal
+                        ? `CASE #${b.bounty_id} • APPEAL RETRYABLE`
+                        : `CASE #${b.bounty_id} • UNDER DISPUTE`}
                     </span>
                     <span className="font-mono text-xs text-purple-400 font-bold">
                       Staked Bond: {formatGen(b.dispute_bond)} GEN
@@ -102,7 +122,7 @@ export const AppellateCourtView: React.FC<AppellateCourtViewProps> = ({
                     </div>
                   )}
 
-                  <div className="flex items-center justify-between pt-2">
+                  <div className="flex items-center justify-between pt-2 gap-2 flex-wrap">
                     <button
                       onClick={() => onSelectBounty(b)}
                       className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono"
@@ -110,14 +130,32 @@ export const AppellateCourtView: React.FC<AppellateCourtViewProps> = ({
                       Inspect Evidence
                     </button>
 
-                    <button
-                      onClick={() => onTriggerAppealAdjudicate(b.bounty_id)}
-                      disabled={Boolean(isProcessingAction)}
-                      className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-400 hover:to-indigo-400 text-white font-bold text-xs font-mono transition-all shadow-[0_0_20px_rgba(168,85,247,0.3)] disabled:opacity-50"
-                    >
-                      <Scale className="w-4 h-4" />
-                      <span>{isAppealing ? 'Council Voting...' : 'Adjudicate Appellate Trace'}</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {isUnresolvedAppeal && isInitiator && onTriggerRefundBond && (
+                        <button
+                          onClick={() => onTriggerRefundBond(b.bounty_id)}
+                          disabled={Boolean(isProcessingAction)}
+                          className="px-3.5 py-2 rounded-xl bg-amber-950 hover:bg-amber-900 border border-amber-500/60 text-amber-300 font-bold text-xs font-mono transition-all disabled:opacity-50"
+                        >
+                          {isRefunding ? 'Refunding...' : 'Refund Dispute Bond'}
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => onTriggerAppealAdjudicate(b.bounty_id)}
+                        disabled={Boolean(isProcessingAction)}
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-400 hover:to-indigo-400 text-white font-bold text-xs font-mono transition-all shadow-[0_0_20px_rgba(168,85,247,0.3)] disabled:opacity-50"
+                      >
+                        <Scale className="w-4 h-4" />
+                        <span>
+                          {isAppealing
+                            ? 'Council Voting...'
+                            : isUnresolvedAppeal
+                            ? 'Retry Appellate Review'
+                            : 'Adjudicate Appellate Trace'}
+                        </span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               );

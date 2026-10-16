@@ -35,6 +35,7 @@ import {
   ensureStudionet,
   adjudicateSecurityAudit,
   adjudicateAppeal,
+  refundDisputeBond,
   finalizeSettlement,
   cancelOrReclaim,
   claimPayout,
@@ -294,6 +295,24 @@ export const App: React.FC = () => {
       setProcessingAction(null);
     }
   };
+
+  // Action: Refund Staked Dispute Bond
+  const handleTriggerRefundDisputeBond = async (bountyId: string) => {
+    if (!account) return alert('Please connect wallet');
+
+    try {
+      setProcessingAction(`refund_bond_${bountyId}`);
+      await refundDisputeBond(contractAddress, account, bountyId);
+      await loadData();
+      alert('Dispute bond refunded successfully! Prior verdict restored.');
+    } catch (err: any) {
+      console.error('Refund dispute bond error:', err);
+      alert(`Refund dispute bond failed: ${err?.message || err}`);
+    } finally {
+      setProcessingAction(null);
+    }
+  };
+
 
   // Action: Finalize Settlement
   const handleTriggerFinalize = async (bountyId: string) => {
@@ -559,6 +578,7 @@ export const App: React.FC = () => {
                       onTriggerAppealAdjudicate={handleTriggerAppealAdjudicate}
                       onTriggerFinalize={handleTriggerFinalize}
                       onTriggerReclaim={handleTriggerReclaim}
+                      onTriggerRefundBond={handleTriggerRefundDisputeBond}
                       isProcessingAction={processingAction}
                     />
                   </div>
@@ -646,6 +666,7 @@ export const App: React.FC = () => {
                 account={account}
                 onOpenAppeal={(b) => setSelectedBountyForAppeal(b)}
                 onTriggerAppealAdjudicate={handleTriggerAppealAdjudicate}
+                onTriggerRefundBond={handleTriggerRefundDisputeBond}
                 onSelectBounty={(b) => {
                   setSelectedBountyForDocked(b);
                   setCurrentView('war_room');
